@@ -5,8 +5,9 @@ pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "../interfaces/ICompliance.sol";
-import "@Rule506c/roles/AgentRole.sol";
+import "../interfaces/IAgentRole.sol";
 import "@Rule506c/token/IToken.sol";
+import "@Rule506c/registry/interface/IIdentityRegistry.sol";
 
 /**
  * @title Compliance
@@ -39,7 +40,7 @@ contract Compliance is Ownable, ICompliance {
      */
     function isTREXAgent(address token, address user) public view override returns (bool) {
         if (isTREX(token)){
-            return AgentRole(token).isAgent(user);
+            return IAgentRole(token).isAgent(user);
         }
         return false;
     }

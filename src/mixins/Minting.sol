@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.17;
 
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "../STO.sol";
+import "../interfaces/ISTO.sol";
 import "./Escrow.sol";
 
 /**
@@ -83,7 +84,7 @@ contract Minting is ReentrancyGuard {
         tokensClaimed[_investor] = true;
         
         // Mint and deliver tokens to the investor
-        STO(sto).issueTokens(_investor, amount);
+        ISTO(sto).issueTokens(_investor, amount);
         
         emit TokensDelivered(_investor, amount);
     }
@@ -106,7 +107,7 @@ contract Minting is ReentrancyGuard {
                     tokensClaimed[investor] = true;
                     
                     // Mint and deliver tokens to the investor
-                    STO(sto).issueTokens(investor, amount);
+                    ISTO(sto).issueTokens(investor, amount);
                     
                     emit TokensDelivered(investor, amount);
                 }
