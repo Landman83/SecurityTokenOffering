@@ -10,6 +10,7 @@ library Events {
     event TokenPurchase(address indexed purchaser, address indexed beneficiary, uint256 value, uint256 amount);
     event SetAllowBeneficialInvestments(bool allowed);
     event STOFinalized(bool softCapReached);
+    event InvestmentWithdrawn(address indexed investor, uint256 amount);
     
     // Cap events
     event SoftCapReached();
@@ -24,6 +25,8 @@ library Events {
     // Refund events
     event RefundsInitialized();
     event RefundClaimed(address indexed investor, uint256 amount);
+    event RefundProcessed(address indexed investor, uint256 amount);
+    event WithdrawalProcessed(address indexed investor, uint256 amount);
     
     // Minting events
     event MintingInitialized();
@@ -31,4 +34,10 @@ library Events {
     
     // Pricing events
     event RateChanged(uint256 newRate);
+    
+    // Fee events
+    event FeeRateChanged(uint256 newFeeRate);
+    event FeeWalletChanged(address indexed newFeeWallet);
+    event FeeOwnershipTransferred(address indexed newOwner);
+    event FeeCollected(address indexed feeWallet, uint256 feeAmount);
 }

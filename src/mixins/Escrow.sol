@@ -16,6 +16,8 @@ import "../STO.sol";
 import "./Cap.sol";
 import "./Refund.sol";
 import "./Minting.sol";
+import "../interfaces/IFees.sol";
+import "../libraries/Events.sol";
 
 /**
  * @title Escrow
@@ -24,6 +26,7 @@ import "./Minting.sol";
  * - STO closed at end of STO period or when hard cap is reached
  * - If soft cap is not reached, funds are returned to investors via Refund.sol
  * - If STO closes and soft cap is reached, Rule506c tokens are minted and delivered to investors via Minting.sol
+ * - Investors can withdraw their investment before offering closes
  */
 contract Escrow is ReentrancyGuard {
     // The STO contract that owns this escrow
@@ -44,11 +47,17 @@ contract Escrow is ReentrancyGuard {
     // The minting contract
     Minting public mintingContract;
     
+    // The fees contract
+    IFees public feesContract;
+    
     // Mapping of investor address to their investment amount
     mapping(address => uint256) public investments;
     
     // Mapping of investor address to their token allocation
     mapping(address => uint256) public tokenAllocations;
+    
+    // Mapping of investor address to their withdrawn amount (before offering closes)
+    mapping(address => uint256) public withdrawals;
     
     // Total investment amount held in escrow
     uint256 public totalInvestment;
@@ -117,6 +126,7 @@ contract Escrow is ReentrancyGuard {
      * @param _wallet Address to receive funds when released
      * @param _refundContract Address of the refund contract
      * @param _mintingContract Address of the minting contract
+     * @param _feesContract Address of the fees contract (optional)
      */
     constructor(
         address _sto,
@@ -124,7 +134,8 @@ contract Escrow is ReentrancyGuard {
         address _investmentToken,
         address _wallet,
         address _refundContract,
-        address _mintingContract
+        address _mintingContract,
+        address _feesContract
     ) {
         require(_sto != address(0), "STO address cannot be zero");
         require(_securityToken != address(0), "Security token address cannot be zero");
@@ -139,6 +150,11 @@ contract Escrow is ReentrancyGuard {
         wallet = _wallet;
         refundContract = Refund(_refundContract);
         mintingContract = Minting(_mintingContract);
+        
+        // Set fees contract if provided
+        if (_feesContract != address(0)) {
+            feesContract = IFees(_feesContract);
+        }
         finalized = false;
         softCapReached = false;
         stoClosed = false;
@@ -177,6 +193,43 @@ contract Escrow is ReentrancyGuard {
     }
     
     /**
+     * @dev Process a withdrawal of funds by an investor before offering closes
+     * @param _investor Address of the investor
+     * @param _amount Amount to withdraw
+     */
+    function processWithdrawal(address _investor, uint256 _amount) 
+        external 
+        onlySTO 
+        notFinalized 
+        stoNotClosed 
+        nonReentrant 
+    {
+        require(_investor != address(0), "Investor address cannot be zero");
+        require(_amount > 0, "Amount must be greater than zero");
+        
+        // Check if investor has enough funds to withdraw
+        uint256 currentInvestment = investments[_investor] - withdrawals[_investor];
+        require(currentInvestment >= _amount, "Withdrawal amount exceeds available investment");
+        
+        // Update withdrawal record
+        withdrawals[_investor] += _amount;
+        
+        // Calculate token allocation to reduce - proportional to withdrawal amount
+        uint256 tokenReduction = (tokenAllocations[_investor] * _amount) / investments[_investor];
+        
+        // Update token allocation
+        tokenAllocations[_investor] -= tokenReduction;
+        
+        // Update totals
+        totalInvestment -= _amount;
+        totalTokensAllocated -= tokenReduction;
+        
+        // Transfer tokens back to investor
+        bool success = investmentToken.transfer(_investor, _amount);
+        require(success, "Withdrawal transfer failed");
+    }
+    
+    /**
      * @dev Close the STO when hard cap is reached or end time is reached
      * @param _hardCapReached Whether the hard cap was reached
      * @param _endTimeReached Whether the end time was reached
@@ -210,12 +263,36 @@ contract Escrow is ReentrancyGuard {
         finalized = true;
         
         if (softCapReached) {
-            // Release funds to wallet
             uint256 balance = investmentToken.balanceOf(address(this));
             if (balance > 0) {
-                bool success = investmentToken.transfer(wallet, balance);
-                require(success, "Failed to release funds to wallet");
-                emit FundsReleased(wallet, balance);
+                // Process fees if a fee contract is set
+                if (address(feesContract) != address(0)) {
+                    // Calculate fee
+                    (uint256 feeAmount, uint256 remainingAmount) = feesContract.calculateFee(balance);
+                    address feeWallet = feesContract.getFeeWallet();
+                    
+                    if (feeAmount > 0 && feeWallet != address(0)) {
+                        // Transfer fee to fee wallet
+                        bool feeSuccess = investmentToken.transfer(feeWallet, feeAmount);
+                        require(feeSuccess, "Failed to transfer fee");
+                        emit Events.FeeCollected(feeWallet, feeAmount);
+                        
+                        // Transfer remaining amount to project wallet
+                        bool walletSuccess = investmentToken.transfer(wallet, remainingAmount);
+                        require(walletSuccess, "Failed to release funds to wallet");
+                        emit FundsReleased(wallet, remainingAmount);
+                    } else {
+                        // No fee to collect, transfer everything to wallet
+                        bool success = investmentToken.transfer(wallet, balance);
+                        require(success, "Failed to release funds to wallet");
+                        emit FundsReleased(wallet, balance);
+                    }
+                } else {
+                    // No fee contract, transfer everything to wallet
+                    bool success = investmentToken.transfer(wallet, balance);
+                    require(success, "Failed to release funds to wallet");
+                    emit FundsReleased(wallet, balance);
+                }
             }
             
             // Transfer investor data to minting contract
@@ -229,12 +306,30 @@ contract Escrow is ReentrancyGuard {
     }
     
     /**
-     * @dev Get investment amount for an investor
+     * @dev Get investment amount for an investor (accounts for any withdrawals)
      * @param _investor Address of the investor
      * @return Investment amount
      */
     function getInvestment(address _investor) external view returns (uint256) {
+        return investments[_investor] - withdrawals[_investor];
+    }
+    
+    /**
+     * @dev Get total amount invested by an investor (original investment)
+     * @param _investor Address of the investor
+     * @return Total investment amount
+     */
+    function getTotalInvestment(address _investor) external view returns (uint256) {
         return investments[_investor];
+    }
+    
+    /**
+     * @dev Get total amount withdrawn by an investor
+     * @param _investor Address of the investor
+     * @return Withdrawn amount
+     */
+    function getWithdrawnAmount(address _investor) external view returns (uint256) {
+        return withdrawals[_investor];
     }
     
     /**

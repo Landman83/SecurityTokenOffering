@@ -11,6 +11,8 @@ import "./Refund.sol";
 import "./Minting.sol";
 import "./PricingLogic.sol";
 import "./FixedPrice.sol";
+import "./Fees.sol";
+import "../interfaces/IFees.sol";
 import "../libraries/Events.sol";
 import "../libraries/Errors.sol";
 import "./MathHelpers.sol";
@@ -51,6 +53,9 @@ contract CappedSTO is CappedSTOStorage, STO, ReentrancyGuard, Cap {
     // The pricing logic contract
     PricingLogic public pricingLogic;
     
+    // The fees contract
+    IFees public fees;
+    
     // Array to keep track of all investors
     address[] private investors;
     
@@ -73,6 +78,8 @@ contract CappedSTO is CappedSTOStorage, STO, ReentrancyGuard, Cap {
      * @param _fundsReceiver Account address to hold the funds
      * @param _investmentToken Address of the ERC20 token used for investment
      * @param _minInvestment Minimum investment amount (optional, 0 for no minimum)
+     * @param _feeRate Fee rate in basis points (1 = 0.01%, 200 = 2%) (optional)
+     * @param _feeWallet Address of wallet to receive fees (optional)
      */
     function configure(
         uint256 _startTime,
@@ -82,7 +89,9 @@ contract CappedSTO is CappedSTOStorage, STO, ReentrancyGuard, Cap {
         uint256 _rate,
         address payable _fundsReceiver,
         address _investmentToken,
-        uint256 _minInvestment
+        uint256 _minInvestment,
+        uint256 _feeRate,
+        address _feeWallet
     )
         public
         onlyFactory
@@ -120,16 +129,24 @@ contract CappedSTO is CappedSTOStorage, STO, ReentrancyGuard, Cap {
         
         // Create the minting and refund contracts first
         minting = new Minting(address(this));
-        refund = new Refund(address(this), _investmentToken);
+        refund = new Refund(address(this), _investmentToken, address(this));
         
-        // Create the escrow contract with references to minting and refund
+        // Create fees contract if fee parameters are provided
+        address feesContractAddress = address(0);
+        if (_feeRate > 0 && _feeWallet != address(0)) {
+            fees = new Fees(_feeRate, _feeWallet, address(this));
+            feesContractAddress = address(fees);
+        }
+        
+        // Create the escrow contract with references to minting, refund, and fees
         escrow = new Escrow(
             address(this),
             address(securityToken),
             _investmentToken,
             _fundsReceiver,
             address(refund),
-            address(minting)
+            address(minting),
+            feesContractAddress
         );
         
         // Set ERC20 as the only fund raise type
@@ -222,7 +239,25 @@ contract CappedSTO is CappedSTOStorage, STO, ReentrancyGuard, Cap {
     }
 
     /**
-     * @notice Claim refund if soft cap was not reached
+     * @notice Allow investors to withdraw some or all of their investment before offering closes
+     * @param _amount Amount to withdraw
+     */
+    function withdrawInvestment(uint256 _amount) public nonReentrant {
+        require(!escrow.isSTOClosed(), "STO is already closed");
+        require(!escrow.isFinalized(), "Escrow is already finalized");
+        
+        refund.withdraw(msg.sender, _amount);
+        
+        // Update tokens sold to reflect the withdrawal
+        // We do this by reducing the funds raised
+        fundsRaised[uint8(FundRaiseType.ERC20)] -= _amount;
+        
+        emit Events.InvestmentWithdrawn(msg.sender, _amount);
+    }
+    
+    /**
+     * @notice Claim refund if soft cap was not reached (manual backup method)
+     * @dev This is only needed if the automatic refund process failed
      */
     function claimRefund() public nonReentrant {
         require(escrow.isFinalized(), "Escrow not finalized");
@@ -252,10 +287,22 @@ contract CappedSTO is CappedSTOStorage, STO, ReentrancyGuard, Cap {
             // If soft cap is reached, automatically mint tokens to all investors
             if (softCapReached) {
                 _mintTokensToAllInvestors();
+            } else {
+                // If soft cap is not reached, automatically process refunds for all investors
+                _processRefundsForAllInvestors();
             }
         }
         
         emit Events.STOFinalized(isSoftCapReached());
+    }
+    
+    /**
+     * @notice Process refunds for all investors when soft cap is not reached
+     * @dev This is called automatically during finalization if soft cap is not reached
+     */
+    function _processRefundsForAllInvestors() internal {
+        // Process refunds in batches to avoid gas limit issues
+        refund.processRefundsForAll(investors);
     }
     
     /**
