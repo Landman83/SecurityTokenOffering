@@ -422,6 +422,13 @@ contract CappedSTO is CappedSTOStorage, STO, ReentrancyGuard, Cap {
     function _preValidatePurchase(address _beneficiary, uint256 _investedAmount) internal view {
         require(_beneficiary != address(0), "Beneficiary address should not be 0x");
         require(_investedAmount != 0, "Amount invested should not be equal to 0");
+        
+        // Check minimum investment amount if pricing logic specifies one
+        uint256 minAmount = pricingLogic.minInvestment();
+        if (minAmount > 0) {
+            require(_investedAmount >= minAmount, "Investment amount is below minimum");
+        }
+        
         require(_canBuy(_beneficiary), "Unauthorized");
         require(block.timestamp >= startTime && block.timestamp <= endTime, "Offering is closed/Not yet started");
         require(!hardCapReached(), "Hard cap reached");
