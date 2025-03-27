@@ -1,0 +1,1 @@
+// Registers new tokens with STO Protocol

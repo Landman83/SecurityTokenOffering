@@ -1,0 +1,3 @@
+@openzeppelin/=lib/openzeppelin-contracts/
+@onchain-id/=lib/onchain-id/
+@Rule506c/=lib/Rule506c/

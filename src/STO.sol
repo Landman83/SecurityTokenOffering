@@ -1,0 +1,1 @@
+// When new security token is created, it should include an STO address. STO can be further configured and updated using proxy

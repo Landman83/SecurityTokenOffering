@@ -1,0 +1,1 @@
+// Simplest STO. Tokens offered at fixed price.
