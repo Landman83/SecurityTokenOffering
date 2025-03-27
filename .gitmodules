@@ -7,3 +7,6 @@
 [submodule "lib/openzeppelin-contracts"]
 	path = lib/openzeppelin-contracts
 	url = https://github.com/OpenZeppelin/openzeppelin-contracts
+[submodule "lib/Rule506c"]
+	path = lib/Rule506c
+	url = https://github.com/Landman83/Rule506c
